@@ -4,6 +4,8 @@ import { createRoot } from 'react-dom/client';
 import { 
   select, 
   drag, 
+  zoom,
+  zoomIdentity,
   geoOrthographic, 
   geoPath, 
   geoGraticule 
@@ -101,6 +103,11 @@ const SVGGlobe: React.FC<{
   const svgRef = useRef<SVGSVGElement>(null);
   const [world, setWorld] = useState<any>(null);
   const [rotation, setRotation] = useState<[number, number]>([0, -20]);
+  const [scale, setScale] = useState<number>(350);
+  
+  // Use a ref for scale to ensure drag behavior always has the current value
+  // without re-binding the event listeners on every zoom change.
+  const scaleRef = useRef(350);
 
   useEffect(() => {
     fetch('https://unpkg.com/world-atlas@2.0.2/countries-110m.json')
@@ -113,22 +120,45 @@ const SVGGlobe: React.FC<{
   
   const projection = useMemo(() => 
     geoOrthographic()
-      .scale(350)
+      .scale(scale)
       .translate([width / 2, height / 2])
       .rotate(rotation)
-  , [rotation]);
+  , [rotation, scale]);
 
   const pathGenerator = geoPath(projection);
 
   useEffect(() => {
     if (!svgRef.current) return;
     const svg = select(svgRef.current);
+
+    // Zoom behavior for scaling
+    const zoomBehavior = zoom<SVGSVGElement, unknown>()
+      .scaleExtent([200, 3000]) // Min/Max zoom
+      .filter((event) => {
+        // IMPORTANT: Only allow zoom on wheel/pinch, NOT mouse dragging.
+        // This prevents zoom from hijacking the "mousedown" event needed for rotation.
+        return event.type === 'wheel' || event.type === 'touchstart' || event.type === 'dblclick';
+      })
+      .on('zoom', (event) => {
+        const newScale = event.transform.k;
+        setScale(newScale);
+        scaleRef.current = newScale;
+      });
+
+    // Initialize zoom transform to match starting scale
+    svg.call(zoomBehavior as any);
+    svg.call(zoomBehavior.transform as any, zoomIdentity.scale(scaleRef.current));
+
+    // Drag behavior for rotation
     const dragBehavior = drag<SVGSVGElement, unknown>().on('drag', (event) => {
+      // Use the ref value to avoid stale closure issues
+      const sensitivity = 75 / scaleRef.current; 
       setRotation(prev => [
-        prev[0] + event.dx / 4,
-        prev[1] - event.dy / 4
+        prev[0] + event.dx * sensitivity,
+        prev[1] - event.dy * sensitivity
       ]);
     });
+
     svg.call(dragBehavior as any);
   }, []);
 
@@ -144,7 +174,14 @@ const SVGGlobe: React.FC<{
 
   return (
     <div className="globe-container flex items-center justify-center w-full h-full">
-      <svg ref={svgRef} width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="max-w-full max-h-full">
+      <svg 
+        ref={svgRef} 
+        width={width} 
+        height={height} 
+        viewBox={`0 0 ${width} ${height}`} 
+        className="max-w-full max-h-full"
+        style={{ touchAction: 'none' }}
+      >
         <defs>
           <radialGradient id="globeGradient" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#1a2b3c" />
@@ -158,7 +195,7 @@ const SVGGlobe: React.FC<{
           </filter>
         </defs>
 
-        <circle cx={width/2} cy={height/2} r={350} fill="url(#globeGradient)" stroke="#1e293b" strokeWidth="1" />
+        <circle cx={width/2} cy={height/2} r={scale} fill="url(#globeGradient)" stroke="#1e293b" strokeWidth="1" />
         <path d={pathGenerator(geoGraticule()()) || ''} fill="none" stroke="#ffffff08" strokeWidth="0.5" />
 
         {world && (
@@ -190,10 +227,14 @@ const SVGGlobe: React.FC<{
         {Object.values(coords).map(c => {
           const projected = projection([c.lng, c.lat]);
           if (!projected) return null;
+          // Check if the point is on the visible hemisphere
+          const isVisible = pathGenerator({type: 'Point', coordinates: [c.lng, c.lat]});
+          if (!isVisible) return null;
+
           return (
             <g key={c.name} transform={`translate(${projected[0]}, ${projected[1]})`}>
               <circle r="3" fill="#3b82f6" />
-              <text y="-8" textAnchor="middle" className="text-[10px] fill-slate-400 pointer-events-none font-medium">
+              <text y="-8" textAnchor="middle" className="text-[10px] fill-slate-400 pointer-events-none font-medium select-none">
                 {c.name}
               </text>
             </g>
@@ -234,7 +275,6 @@ const App: React.FC = () => {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rawData: any[] = XLSX.utils.sheet_to_json(ws);
         
-        // Smart mapping for common aliases
         const newFlights: Flight[] = rawData.map((r, i) => {
           const fromValue = r.from || r.From || r.Origin || r.origin || r.source || r.Source;
           const toValue = r.to || r.To || r.Destination || r.destination || r.target || r.Target;
@@ -355,7 +395,7 @@ const App: React.FC = () => {
             ) : (
               <div className="bg-slate-900/40 backdrop-blur-md border border-white/5 px-4 py-3 rounded-2xl flex items-center space-x-3">
                 <RefreshCw className="w-4 h-4 text-blue-500 animate-spin-slow" />
-                <p className="text-[11px] text-slate-400">Drag globe to rotate • Click arcs to inspect</p>
+                <p className="text-[11px] text-slate-400">Scroll to zoom • Drag to rotate • Click arcs</p>
               </div>
             )}
           </div>
