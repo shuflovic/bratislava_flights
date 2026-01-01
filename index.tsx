@@ -232,15 +232,29 @@ const App: React.FC = () => {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const data: any[] = XLSX.utils.sheet_to_json(ws);
+        const rawData: any[] = XLSX.utils.sheet_to_json(ws);
         
-        const newFlights: Flight[] = data.map((r, i) => ({
-          id: `up-${i}-${Date.now()}`,
-          from: r.from || r.From,
-          to: r.to || r.To,
-          duration: String(r.duration || r.Duration || 'N/A'),
-          airlines: String(r.airlines || r.Airlines || 'Unknown')
-        })).filter(f => f.from && f.to);
+        // Smart mapping for common aliases
+        const newFlights: Flight[] = rawData.map((r, i) => {
+          const fromValue = r.from || r.From || r.Origin || r.origin || r.source || r.Source;
+          const toValue = r.to || r.To || r.Destination || r.destination || r.target || r.Target;
+          const durationValue = r.duration || r.Duration || r.time || r.Time || r['Flight Time'];
+          const airlineValue = r.airlines || r.Airlines || r.carrier || r.Carrier || r.airline || r.Airline;
+
+          return {
+            id: `up-${i}-${Date.now()}`,
+            from: String(fromValue || '').trim(),
+            to: String(toValue || '').trim(),
+            duration: String(durationValue || 'N/A'),
+            airlines: String(airlineValue || 'Unknown')
+          };
+        }).filter(f => f.from && f.to);
+
+        if (newFlights.length === 0) {
+          alert("No valid flights found. Please check column names (From, To, Duration, Airlines).");
+          setLoading(false);
+          return;
+        }
 
         const missing = new Set<string>();
         newFlights.forEach(f => {
@@ -255,7 +269,7 @@ const App: React.FC = () => {
         setFlights(newFlights);
       } catch (err) {
         console.error("File error:", err);
-        alert("There was an error reading your file. Please use the sample format.");
+        alert("Error reading file. Please use a standard Excel or CSV file.");
       } finally {
         setLoading(false);
       }
