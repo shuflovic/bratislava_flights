@@ -1,0 +1,5 @@
+{
+  "name": "AeroVista Globe",
+  "description": "A sophisticated 3D flight visualization dashboard that renders global flight paths from Excel/CSV data using a high-fidelity interactive globe.",
+  "requestFramePermissions": []
+}
